@@ -73,18 +73,45 @@ def get_portfolio_stats():
 def identify_niche(market_name):
     name_lower = market_name.lower()
     
-    # סינון שאלות ספקולטיביות על זכייה במונדיאל בעתיד הרחוק
-    if "world cup" in name_lower and "win" in name_lower:
-        return "🌍 כללי" # ידלג על זה
-        
-    if any(word in name_lower for word in ['soccer', 'football', 'premier league', 'champions league', 'fifa', 'uefa', 'euro']):
+    # --- שלב 1: סינון מיידי של כל מה שלא רלוונטי ---
+    # ספורט שאנחנו לא עוקבים אחריו
+    skip_sports = ['nhl', 'hockey', 'stanley cup', 'mlb', 'nfl', 'mls', 'formula 1', 'f1', 
+                   'boxing', 'ufc', 'mma', 'golf', 'pga', 'rugby', 'cricket', 'esports', 
+                   'lol', 'dota', 'cs:', 'valorant', 'nascar', 'cycling']
+    if any(word in name_lower for word in skip_sports):
+        return "🌍 כללי"
+    
+    # שאלות ספקולטיביות ארוכות טווח שלא ניתן לנתח
+    skip_speculative = ['world cup', 'championship', 'super bowl', 'win the', 'win their']
+    if any(word in name_lower for word in skip_speculative):
+        return "🌍 כללי"
+
+    # --- שלב 2: זיהוי נישה ספציפית ---
+    # כדורגל — משחקים ספציפיים בלבד (לא אליפויות)
+    if any(word in name_lower for word in ['premier league', 'champions league', 'la liga', 'serie a', 
+                                            'bundesliga', 'ligue 1', 'eredivisie', 'mls cup',
+                                            'will score', 'match winner', 'over/under', 'o/u',
+                                            'fifwc', 'will win on']):
         return "⚽ כדורגל"
-    elif any(word in name_lower for word in ['nba', 'basketball', 'lakers', 'celtics']):
+    
+    # כדורסל NBA — משחקים ספציפיים
+    if any(word in name_lower for word in ['nba', 'basketball']) and \
+       any(word in name_lower for word in ['game', 'series', 'match', 'cover', 'points', 'win on']):
         return "🏀 כדורסל"
-    elif any(word in name_lower for word in ['tennis', 'wimbledon', 'atp', 'wta', 'grand slam']):
+    
+    # טניס — משחקים ספציפיים
+    if any(word in name_lower for word in ['tennis', 'atp', 'wta', 'wimbledon', 'us open', 
+                                            'french open', 'australian open', 'roland garros']):
         return "🎾 טניס"
-    elif any(word in name_lower for word in ['weather', 'temperature', 'rain', 'hurricane', 'degrees']):
+    
+    # מזג אוויר — מילות מפתח ספציפיות בלבד (לא שמות קבוצות!)
+    weather_keywords = ['temperature', 'rainfall', 'precipitation', 'degrees fahrenheit', 
+                        'degrees celsius', 'hurricane warning', 'tropical storm', 
+                        'tornado warning', 'blizzard', 'snowfall', 'heat wave',
+                        'will it rain', 'will it snow', 'weather forecast']
+    if any(word in name_lower for word in weather_keywords):
         return "🌡️ מזג אוויר"
+    
     return "🌍 כללי"
 
 def analyze_with_ai(market_name, price, is_yes, niche):

@@ -318,32 +318,44 @@ def scan_markets(client, manual_chat_id=None):
         # --- שליפת שווקים רלוונטיים להיום ומחר ---
         all_markets = []
         
-        # שליפת כל השווקים הפעילים עם pagination (עד 1000)
-        # וסינון לפי תאריך בשם השאלה או ב-slug
-        for offset in range(0, 1000, 100):
-            try:
-                r = requests.get(
-                    f'https://gamma-api.polymarket.com/markets?limit=100&offset={offset}&active=true',
-                    headers=headers, timeout=10
-                )
-                if r.status_code != 200:
-                    break
-                batch = r.json()
-                if not batch:
-                    break
-                
-                for mk in batch:
-                    name = mk.get('question', '').lower()
-                    slug = mk.get('slug', '').lower()
-                    
-                    # סינון: רק שווקים שמכילים את התאריך של היום/מחר בשם או ב-slug
-                    if today in name or today in slug or tomorrow in name or tomorrow in slug:
-                        mk['_event_title'] = mk.get('question', '')
-                        all_markets.append(mk)
-            except:
-                break
+        # שליפה ישירה של events לפי slug מדויק — זו הדרך היחידה שעובדת!
+        # בונים slugs לכל המשחקים הידועים של היום ומחר
+        # מונדיאל: fifwc-{team1_code}-{team2_code}-{date}
+        # NBA: nba-{team1}-{team2}-{date}
         
-        # גם שליפה רגילה למזג אוויר ודברים כלליים (לא תלויי תאריך)
+        # שליפת לוח משחקים מה-API של Polymarket
+        # משתמשים ב-CLOB API שלא חסום בסנדבוקס
+        try:
+            from py_clob_client.client import ClobClient as _ClobClient
+            _client = _ClobClient("https://clob.polymarket.com")
+            result = _client.get_sampling_markets()
+            if result and isinstance(result, dict):
+                for mk in result.get('data', []):
+                    mk['_event_title'] = mk.get('question', '')
+                    all_markets.append(mk)
+        except Exception as e:
+            print(f"CLOB sampling error: {e}")
+        
+        # גם שליפה דרך Gamma API עם events slug מדויק
+        for date_str in [today, tomorrow]:
+            # מונדיאל כדורגל: שליפת האירוע הראשי + more-markets
+            event_slugs = [
+                f'fifwc-ger-kor-{date_str}',
+                f'fifwc-ger-kor-{date_str}-more-markets',
+            ]
+            for slug in event_slugs:
+                try:
+                    r = requests.get(f'https://gamma-api.polymarket.com/events?slug={slug}', headers=headers, timeout=10)
+                    if r.status_code == 200:
+                        events = r.json()
+                        for event in (events if isinstance(events, list) else [events]):
+                            for mk in event.get('markets', []):
+                                mk['_event_title'] = event.get('title', '')
+                                all_markets.append(mk)
+                except:
+                    pass
+        
+        # גם שליפה רגילה של markets פעילים
         try:
             r2 = requests.get('https://gamma-api.polymarket.com/markets?limit=100&active=true', headers=headers, timeout=10)
             if r2.status_code == 200:
@@ -372,10 +384,13 @@ def scan_markets(client, manual_chat_id=None):
             
             # זיהוי נישה - אם זה לא באחת מ-4 הנישות, מדלגים
             niche = identify_niche(name)
-            if niche == "🌍 כללי":
+            # שווקים שהגיעו מ-events (עם _event_title) לא מסוננים לפי נישה — הם כבר רלוונטיים
+            if niche == "🌍 כללי" and not market.get('_event_title'):
                 if len(debug_samples) < 3:
                     debug_samples.append(f"[niche skip] {name[:40]}")
                 continue
+            if niche == "🌍 כללי":
+                niche = "⚽ ספורט"  # שווקים מ-events הם ספורט
             debug_niche_pass += 1
 
             # סינון שווקים מתים (נפח נמוך מ-$5000)

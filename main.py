@@ -219,9 +219,9 @@ def scan_markets(client, manual_chat_id=None):
                 price = float(price)
 
                 signal_type, entry_price, is_yes = None, 0, True
-                if price < 0.20:
+                if price < 0.30:
                     signal_type, entry_price, is_yes = "קנה YES", price, True
-                elif price > 0.80:
+                elif price > 0.70:
                     signal_type, entry_price, is_yes = "קנה NO", round(1.0 - price, 2), False
 
                 if signal_type:

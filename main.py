@@ -315,45 +315,35 @@ def scan_markets(client, manual_chat_id=None):
         today = datetime.datetime.utcnow().strftime('%Y-%m-%d')
         tomorrow = (datetime.datetime.utcnow() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
         
-        # --- שליפת שווקים רלוונטיים להיום ומחר ---
+        # --- שליפת שווקים מדף הספורט של Polymarket ---
         all_markets = []
         
-        # שליפה ישירה של events לפי slug מדויק — זו הדרך היחידה שעובדת!
-        # בונים slugs לכל המשחקים הידועים של היום ומחר
-        # מונדיאל: fifwc-{team1_code}-{team2_code}-{date}
-        # NBA: nba-{team1}-{team2}-{date}
+        # שימוש ב-Next.js JSON endpoint של Polymarket — זה מה שהאתר משתמש בו!
+        sports_urls = [
+            'https://polymarket.com/_next/data/build-TfctsWXpff2fKS/sports/world-cup/games.json?locale=en&league=world-cup',
+            'https://polymarket.com/_next/data/build-TfctsWXpff2fKS/sports.json?locale=sports',
+        ]
         
-        # שליפת לוח משחקים מה-API של Polymarket
-        # משתמשים ב-CLOB API שלא חסום בסנדבוקס
-        try:
-            from py_clob_client.client import ClobClient as _ClobClient
-            _client = _ClobClient("https://clob.polymarket.com")
-            result = _client.get_sampling_markets()
-            if result and isinstance(result, dict):
-                for mk in result.get('data', []):
-                    mk['_event_title'] = mk.get('question', '')
-                    all_markets.append(mk)
-        except Exception as e:
-            print(f"CLOB sampling error: {e}")
-        
-        # גם שליפה דרך Gamma API עם events slug מדויק
-        for date_str in [today, tomorrow]:
-            # מונדיאל כדורגל: שליפת האירוע הראשי + more-markets
-            event_slugs = [
-                f'fifwc-ger-kor-{date_str}',
-                f'fifwc-ger-kor-{date_str}-more-markets',
-            ]
-            for slug in event_slugs:
-                try:
-                    r = requests.get(f'https://gamma-api.polymarket.com/events?slug={slug}', headers=headers, timeout=10)
-                    if r.status_code == 200:
-                        events = r.json()
-                        for event in (events if isinstance(events, list) else [events]):
-                            for mk in event.get('markets', []):
-                                mk['_event_title'] = event.get('title', '')
-                                all_markets.append(mk)
-                except:
-                    pass
+        for url in sports_urls:
+            try:
+                r = requests.get(url, headers=headers, timeout=15)
+                if r.status_code == 200:
+                    data = r.json()
+                    # ה-JSON מכיל נתוני שווקים בתוך pageProps
+                    page_props = data.get('pageProps', {})
+                    events = page_props.get('events', page_props.get('games', []))
+                    if isinstance(events, list):
+                        for event in events:
+                            markets = event.get('markets', [])
+                            if isinstance(markets, list):
+                                for mk in markets:
+                                    mk['_event_title'] = event.get('title', event.get('name', ''))
+                                    all_markets.append(mk)
+                            elif isinstance(event, dict) and event.get('question'):
+                                event['_event_title'] = event.get('question', '')
+                                all_markets.append(event)
+            except Exception as e:
+                print(f"Sports URL error: {e}")
         
         # גם שליפה רגילה של markets פעילים
         try:

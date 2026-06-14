@@ -310,18 +310,41 @@ def handle_commands():
 # ==========================================
 def scan_markets(client, manual_chat_id=None):
     try:
-        # שימוש ב-Gamma API שמחזיר מחירים ישירות — מהיר הרבה יותר
         import json as _json
         headers = {'User-Agent': 'Mozilla/5.0'}
-        r = requests.get('https://gamma-api.polymarket.com/markets?limit=200&active=true', headers=headers, timeout=15)
-        if r.status_code != 200:
-            if manual_chat_id: send_telegram(manual_chat_id, "❌ לא נמצאו שווקים כרגע.")
-            return
+        today = datetime.datetime.utcnow().strftime('%Y-%m-%d')
+        tomorrow = (datetime.datetime.utcnow() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
         
-        all_markets = r.json()
+        # --- שליפת אירועים של היום ומחר דרך Events API ---
+        all_markets = []
+        
+        # 1. שליפת events עם slug שמכיל את התאריך של היום
+        for date_str in [today, tomorrow]:
+            try:
+                r = requests.get(f'https://gamma-api.polymarket.com/events?slug={date_str}&limit=50', headers=headers, timeout=10)
+                if r.status_code == 200:
+                    events = r.json()
+                    for event in events:
+                        for mk in event.get('markets', []):
+                            mk['_event_title'] = event.get('title', '')
+                            all_markets.append(mk)
+            except:
+                pass
+        
+        # 2. גם שליפה רגילה של markets פעילים (למזג אוויר ודברים שלא ב-events)
+        try:
+            r2 = requests.get('https://gamma-api.polymarket.com/markets?limit=100&active=true', headers=headers, timeout=10)
+            if r2.status_code == 200:
+                all_markets.extend(r2.json())
+        except:
+            pass
+        
         if not all_markets:
             if manual_chat_id: send_telegram(manual_chat_id, "❌ לא נמצאו שווקים כרגע.")
             return
+        
+        if manual_chat_id:
+            send_telegram(manual_chat_id, f"🔍 נמצאו {len(all_markets)} שווקים. מסנן...")
 
         signals_found = 0
         for market in all_markets:
@@ -337,17 +360,18 @@ def scan_markets(client, manual_chat_id=None):
             if volume and float(volume) < 5000:
                 continue
             
-            # סינון לפי תאריך — רק אירועים של היום או מחר!
-            end_date = market.get('endDate', '')
-            if end_date:
-                try:
-                    market_date = datetime.datetime.fromisoformat(end_date.replace('Z', '+00:00')).date()
-                    today = datetime.datetime.utcnow().date()
-                    tomorrow = today + datetime.timedelta(days=1)
-                    if market_date > tomorrow:
-                        continue  # מדלג על שווקים שלא היום או מחר
-                except:
-                    pass
+            # פילטר תאריך: שווקים מה-events API כבר מסוננים להיום/מחר.
+            # רק שווקים מהשליפה הרגילה צריכים סינון תאריך
+            if not market.get('_event_title'):  # זה מהשליפה הרגילה, נסנן תאריך
+                end_date = market.get('endDate', '')
+                if end_date:
+                    try:
+                        market_date = datetime.datetime.fromisoformat(end_date.replace('Z', '+00:00')).date()
+                        today_date = datetime.datetime.utcnow().date()
+                        if market_date > today_date + datetime.timedelta(days=7):
+                            continue
+                    except:
+                        pass
 
             # מחיר ישירות מה-API — ללא קריאה נוספת!
             prices = market.get('outcomePrices')

@@ -223,29 +223,50 @@ def handle_commands():
 # ==========================================
 def scan_markets(client, manual_chat_id=None):
     try:
-        # Gamma API is better for searching specific categories, but we use simplified for now
-        markets = client.get_simplified_markets()
-        if not markets or "data" not in markets:
+        # שימוש ב-Gamma API שמחזיר מחירים ישירות — מהיר הרבה יותר
+        import json as _json
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get('https://gamma-api.polymarket.com/markets?limit=200&active=true', headers=headers, timeout=15)
+        if r.status_code != 200:
+            if manual_chat_id: send_telegram(manual_chat_id, "❌ לא נמצאו שווקים כרגע.")
+            return
+        
+        all_markets = r.json()
+        if not all_markets:
             if manual_chat_id: send_telegram(manual_chat_id, "❌ לא נמצאו שווקים כרגע.")
             return
 
         signals_found = 0
-        for market in markets["data"][:50]: # סורקים יותר שווקים כדי למצוא את הנישות
-            name = market.get("question")
+        for market in all_markets:
+            name = market.get("question", "")
             
             # זיהוי נישה - אם זה לא באחת מ-4 הנישות, מדלגים
             niche = identify_niche(name)
             if niche == "🌍 כללי":
                 continue
-                
-            tokens = market.get("tokens", [])
-            if not tokens or len(tokens) < 2: continue
-            yes_token = tokens[0]["token_id"]
+
+            # מחיר ישירות מה-API — ללא קריאה נוספת!
+            prices = market.get('outcomePrices')
+            if not prices:
+                continue
+            try:
+                if isinstance(prices, str):
+                    prices = _json.loads(prices)
+                price = float(prices[0])
+            except:
+                continue
+
+            yes_token = None
+            clobtokens = market.get('clobTokenIds')
+            if clobtokens:
+                try:
+                    if isinstance(clobtokens, str):
+                        clobtokens = _json.loads(clobtokens)
+                    yes_token = clobtokens[0]
+                except:
+                    pass
             
             try:
-                price = client.get_price(yes_token, side="BUY")
-                if not price: continue
-                price = float(price)
 
                 # סינון בסיסי - תמחור קיצוני
                 signal_type, entry_price, is_yes = None, 0, True

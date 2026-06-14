@@ -10,8 +10,7 @@ import json
 # 1. Configuration
 # ==========================================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8907723838:AAG5fi0vcbtf9SCdinPR7ilui2E9OPBkqZA")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "USE_SANDBOX_AI")
-GAMMA_API = "https://gamma-api.polymarket.com"
+BUILD_ID = "build-TfctsWXpff2fKS" # Dynamic Build ID from Polymarket site
 
 # ==========================================
 # 2. Database Setup
@@ -52,86 +51,80 @@ def get_all_users():
     return users
 
 # ==========================================
-# 3. Polymarket Scanner (STABLE)
+# 3. Polymarket Next.js Scanner (ULTRA STABLE)
 # ==========================================
-def fetch_active_markets():
-    """שליפת שווקים פעילים ישירות מה-Markets API - זה מחזיר שווקים בודדים ולא אירועים"""
-    url = f"{GAMMA_API}/markets"
-    params = {
-        "active": "true",
-        "closed": "false",
-        "limit": 100,
-        "order": "volume_24hr",
-        "ascending": "false"
+def fetch_live_sports():
+    """שליפת משחקי ספורט חיים מה-JSON הפנימי של האתר"""
+    url = f"https://polymarket.com/_next/data/{BUILD_ID}/sports/live.json"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
     }
     try:
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
-            return r.json()
+            data = r.json()
+            # Extract markets from the pageProps
+            return data.get('pageProps', {}).get('dehydratedState', {}).get('queries', [])
     except Exception as e:
         print(f"Fetch Error: {e}")
     return []
 
 def scan_markets(manual_chat_id=None):
-    markets = fetch_active_markets()
-    if not markets:
+    queries = fetch_live_sports()
+    if not queries:
         if manual_chat_id:
-            send_telegram(manual_chat_id, "❌ לא הצלחתי למשוך נתונים מה-API.")
+            send_telegram(manual_chat_id, "❌ לא הצלחתי למשוך נתונים חיים מהאתר. מנסה דרך ה-API הרגיל...")
+            # Fallback to standard API if Next.js fails
+            fallback_scan(manual_chat_id)
         return
 
     found_count = 0
-    keywords = ['soccer', 'football', 'nba', 'basketball', 'tennis', 'weather', 'temperature', 'rain', 'match', 'vs']
-    
-    for m in markets:
-        question = m.get('question', '')
-        group_item_title = m.get('groupItemTitle', '')
-        title = question if question else group_item_title
+    # נחפש בתוך ה-queries את הנתונים של השווקים
+    for q in queries:
+        state = q.get('state', {})
+        data = state.get('data', {})
         
-        if not title:
-            continue
-            
-        is_relevant = any(kw in title.lower() for kw in keywords)
-        
-        if is_relevant:
-            found_count += 1
-            price = float(m.get('outcomePrices', [0, 0])[0])
-            
-            # אם זה מעל 0.95 או מתחת ל-0.05, זה לא איתות מעניין
-            if price > 0.95 or price < 0.05:
-                continue
-
-            msg = (
-                f"🎯 *איתות זוהה!*\n\n"
-                f"🏟️ *{title}*\n"
-                f"🔑 קניית YES\n"
-                f"💰 מחיר: ${price:.2f}\n"
-                f"📊 ווליום: ${float(m.get('volume24hr', 0)):,.0f}\n"
-                f"🔗 [למסחר](https://polymarket.com/market/{m.get('slug')})"
-            )
-            
-            if manual_chat_id:
-                send_telegram(manual_chat_id, msg)
-            else:
-                for user in get_all_users():
-                    send_telegram(user, msg)
-            
-            log_trade(title, "BUY YES", price, 70)
-            
-            # הגבלה ל-5 איתותים בסריקה אחת כדי לא להציף
-            if found_count >= 5:
-                break
+        # אם זה רשימת אירועים
+        if isinstance(data, list):
+            for event in data:
+                title = event.get('title', '')
+                markets = event.get('markets', [])
+                
+                if markets:
+                    m = markets[0]
+                    price = float(m.get('outcomePrices', [0, 0])[0])
+                    
+                    if 0.05 < price < 0.95:
+                        found_count += 1
+                        msg = (
+                            f"🔥 *איתות חי מהאתר!* 🔥\n\n"
+                            f"🏟️ *{title}*\n"
+                            f"🔑 קניית YES\n"
+                            f"💰 מחיר: ${price:.2f}\n"
+                            f"📊 ווליום: ${event.get('volume24hr', 0):,.0f}\n"
+                            f"🔗 [למסחר](https://polymarket.com/event/{event.get('slug')})"
+                        )
+                        if manual_chat_id:
+                            send_telegram(manual_chat_id, msg)
+                        else:
+                            for user in get_all_users():
+                                send_telegram(user, msg)
+                        
+                        if found_count >= 5: break
+            if found_count >= 5: break
 
     if found_count == 0 and manual_chat_id:
-        send_telegram(manual_chat_id, "⚠️ לא נמצאו שווקי ספורט/מזג אוויר רלוונטיים ברגע זה (נסרק 100 השווקים המובילים).")
+        send_telegram(manual_chat_id, "⚠️ לא נמצאו משחקים חיים מעניינים כרגע.")
 
-def log_trade(market, action, entry_price, ai_score):
-    conn = sqlite3.connect('simulator.db', check_same_thread=False)
-    c = conn.cursor()
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("INSERT INTO portfolio (market, action, entry_price, amount, ai_score, status, timestamp) VALUES (?, ?, ?, 10.0, ?, 'OPEN', ?)",
-              (market, action, entry_price, ai_score, now))
-    conn.commit()
-    conn.close()
+def fallback_scan(chat_id):
+    # פונקציית גיבוי למקרה שה-Next.js נכשל
+    url = "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=20&order=volume_24hr"
+    try:
+        r = requests.get(url).json()
+        for m in r[:3]:
+            send_telegram(chat_id, f"📡 *איתות גיבוי:* {m.get('question')} | ${m.get('outcomePrices',[0])[0]}")
+    except: pass
 
 # ==========================================
 # 4. Telegram Communication
@@ -160,21 +153,17 @@ def handle_commands():
                         add_user(chat_id)
                         
                         if text == "/start":
-                            send_telegram(chat_id, "🚀 הבוט הופעל! אני סורק שווקים עכשיו...")
+                            send_telegram(chat_id, "🚀 הבוט הופעל ומחובר ישירות לנתוני האתר החיים!")
                         elif text == "/scan":
-                            send_telegram(chat_id, "🔄 סורק עכשיו את ה-API הרשמי...")
+                            send_telegram(chat_id, "🔄 סורק משחקים חיים מהאתר (Germany vs Curacao וכו')...")
                             scan_markets(manual_chat_id=chat_id)
         except:
             pass
         time.sleep(1)
 
-# ==========================================
-# 5. Main Execution
-# ==========================================
 if __name__ == "__main__":
     setup_db()
     threading.Thread(target=handle_commands, daemon=True).start()
-    print("Bot is running...")
     while True:
         scan_markets()
-        time.sleep(600)
+        time.sleep(300)

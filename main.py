@@ -11,7 +11,7 @@ from py_clob_client.client import ClobClient
 # ==========================================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8907723838:AAG5fi0vcbtf9SCdinPR7ilui2E9OPBkqZA")
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 300))
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "USE_SANDBOX_AI")
 
 # ==========================================
 # 2. Database
@@ -115,35 +115,55 @@ def identify_niche(market_name):
     return "🌍 כללי"
 
 def analyze_with_ai(market_name, price, is_yes, niche):
-    if not OPENAI_API_KEY:
-        # ציון נמוך יותר כשאין AI אמיתי, כדי למנוע ספאם
-        return 65, f"⚠️ מנוע ה-AI כבוי (חסר מפתח OpenAI). הניתוח מבוסס על תמחור סטטיסטי בלבד בנישת {niche}."
-    
-    prompt = f"""
-    You are an expert sports/weather analyst trading on Polymarket.
-    Analyze this trade opportunity:
-    Market: "{market_name}"
-    Niche: {niche}
-    Action: Buy {"YES" if is_yes else "NO"}
-    Price: ${price:.2f}
-
-    Evaluate the fundamental value based on current real-world data (sports stats, weather forecasts).
-    Return ONLY a JSON object with:
-    - "score": integer 1-100 (100 is best, only give >80 if it's a very strong edge)
-    - "reason": A short 1-sentence explanation in Hebrew based on stats/data.
     """
+    ניתוח AI עמוק — שולח את הנתונים ל-GPT-4 לניתוח אמיתי.
+    ה-AI מקבל את שם השוק, המחיר, והנישה — וצריך להחליט אם יש אדג' אמיתי.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    api_base = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+    
+    if not api_key or api_key == "USE_SANDBOX_AI":
+        return 65, f"⚠️ מנוע ה-AI כבוי. הניתוח מבוסס על תמחור בלבד בנישת {niche}."
+    
+    prompt = f"""You are a professional sports/weather bettor analyzing Polymarket.
+Today's date: {datetime.datetime.now().strftime('%Y-%m-%d')}.
+
+Market: "{market_name}"
+Niche: {niche}
+Proposed action: Buy {"YES" if is_yes else "NO"}
+Current price: ${price:.2f}
+
+IMPORTANT RULES:
+- Only give score above 80 if you have STRONG evidence this is mispriced
+- Consider: Is this team/player actually likely to win TODAY based on recent form?
+- Consider: Is the market price already fair? If yes, score should be below 60
+- Be SKEPTICAL. Most markets are correctly priced.
+- A score of 50 means "no edge, skip this"
+- A score of 90+ means "very high confidence the market is wrong"
+
+Return ONLY valid JSON:
+{{"score": <int 1-100>, "reason": "<1 sentence in Hebrew explaining your analysis>"}}
+"""
     try:
         response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-            json={"model": "gpt-4o", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3},
-            timeout=10
+            f"{api_base}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": prompt}], "temperature": 0.2},
+            timeout=15
         )
         data = response.json()
-        result = eval(data['choices'][0]['message']['content'])
-        return result.get("score", 50), result.get("reason", "ניתוח הושלם")
-    except:
-        return 60, "מבוסס על תמחור סטטיסטי."
+        content = data['choices'][0]['message']['content'].strip()
+        # ניקוי JSON
+        if content.startswith('```'):
+            content = content.split('\n', 1)[1].rsplit('```', 1)[0]
+        import json as _j
+        result = _j.loads(content)
+        score = int(result.get("score", 50))
+        reason = result.get("reason", "ניתוח הושלם")
+        return score, reason
+    except Exception as e:
+        print(f"AI Error: {e}")
+        return 55, "שגיאה בניתוח AI. מדלג."
 
 def check_whale_activity(token_id):
     whale_alert = False
@@ -282,6 +302,18 @@ def scan_markets(client, manual_chat_id=None):
             volume = market.get('volume', 0)
             if volume and float(volume) < 5000:
                 continue
+            
+            # סינון לפי תאריך — רק אירועים של היום או מחר!
+            end_date = market.get('endDate', '')
+            if end_date:
+                try:
+                    market_date = datetime.datetime.fromisoformat(end_date.replace('Z', '+00:00')).date()
+                    today = datetime.datetime.utcnow().date()
+                    tomorrow = today + datetime.timedelta(days=1)
+                    if market_date > tomorrow:
+                        continue  # מדלג על שווקים שלא היום או מחר
+                except:
+                    pass
 
             # מחיר ישירות מה-API — ללא קריאה נוספת!
             prices = market.get('outcomePrices')

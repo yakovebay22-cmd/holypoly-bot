@@ -28,7 +28,6 @@ def setup_db():
                   ai_score INTEGER,
                   status TEXT,
                   timestamp DATETIME)''')
-    # טבלת משתמשים (לשמירת מי שהפעיל את הבוט)
     c.execute('''CREATE TABLE IF NOT EXISTS users (
                   chat_id TEXT PRIMARY KEY,
                   joined_at DATETIME)''')
@@ -69,12 +68,37 @@ def get_portfolio_stats():
     return total
 
 # ==========================================
-# 3. AI & Whale Tracker
+# 3. Niche Analyzers & Whale Tracker
 # ==========================================
-def analyze_with_ai(market_name, price, is_yes):
+def identify_niche(market_name):
+    name_lower = market_name.lower()
+    if any(word in name_lower for word in ['soccer', 'football', 'premier league', 'champions league', 'fifa', 'uefa']):
+        return "⚽ כדורגל"
+    elif any(word in name_lower for word in ['nba', 'basketball', 'lakers', 'celtics']):
+        return "🏀 כדורסל"
+    elif any(word in name_lower for word in ['tennis', 'wimbledon', 'atp', 'wta', 'grand slam']):
+        return "🎾 טניס"
+    elif any(word in name_lower for word in ['weather', 'temperature', 'rain', 'hurricane', 'degrees']):
+        return "🌡️ מזג אוויר"
+    return "🌍 כללי"
+
+def analyze_with_ai(market_name, price, is_yes, niche):
     if not OPENAI_API_KEY:
-        return 75, "מבוסס על תמחור סטטיסטי קיצוני."
-    prompt = f"Analyze trade: Market: '{market_name}', Action: Buy {'YES' if is_yes else 'NO'}, Price: ${price:.2f}. Return JSON: {{'score': 1-100, 'reason': '1 short sentence in Hebrew'}}"
+        return 75, f"מבוסס על תמחור סטטיסטי בנישת {niche}."
+    
+    prompt = f"""
+    You are an expert sports/weather analyst trading on Polymarket.
+    Analyze this trade opportunity:
+    Market: "{market_name}"
+    Niche: {niche}
+    Action: Buy {"YES" if is_yes else "NO"}
+    Price: ${price:.2f}
+
+    Evaluate the fundamental value based on current real-world data (sports stats, weather forecasts).
+    Return ONLY a JSON object with:
+    - "score": integer 1-100 (100 is best, only give >80 if it's a very strong edge)
+    - "reason": A short 1-sentence explanation in Hebrew based on stats/data.
+    """
     try:
         response = requests.post(
             "https://api.openai.com/v1/chat/completions",
@@ -120,14 +144,14 @@ def broadcast_signal(signal_msg):
     for user in users:
         send_telegram(user, signal_msg)
 
-def format_advanced_signal(market_name, signal, total_trades):
+def format_advanced_signal(market_name, signal, total_trades, niche):
     icon = "🟢" if "YES" in signal['action'] else "🔴"
     score = signal['ai_score']
     score_icon = "🔥" if score >= 80 else ("⭐" if score >= 60 else "⚠️")
     whale_text = f"\n🐋 *התראת לוויתנים:* זוהו עסקאות חכמות בנפח ${signal['whale_vol']:,.0f}!" if signal['whale_alert'] else ""
 
     return (
-        f"🧠 *איתות חכם* 🧠\n\n"
+        f"{niche} *איתות ממוקד* {niche}\n\n"
         f"*{market_name}*\n\n"
         f"🔑 {signal['action']} {icon}\n"
         f"🎯 מחיר כניסה: ${signal['entry']:.2f}\n"
@@ -139,7 +163,7 @@ def format_advanced_signal(market_name, signal, total_trades):
     )
 
 # ==========================================
-# 5. Telegram Commands Listener (Long Polling)
+# 5. Telegram Commands Listener
 # ==========================================
 def get_updates(offset=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
@@ -162,13 +186,12 @@ def handle_commands():
                     chat_id = str(update["message"]["chat"]["id"])
                     text = update["message"]["text"]
                     
-                    # הוספת המשתמש למסד הנתונים כדי שיקבל איתותים
                     add_user(chat_id)
                     
                     if text == "/start":
                         msg = (
                             "👋 *ברוך הבא ל-HolyPoly Bot!*\n\n"
-                            "הבוט סורק את שווקי Polymarket ושולח איתותים אוטומטית.\n\n"
+                            "הבוט סורק את שווקי Polymarket ומתמקד בנישות: ⚽ כדורגל, 🏀 כדורסל, 🎾 טניס ו-🌡️ מזג אוויר.\n\n"
                             "פקודות זמינות:\n"
                             "🔹 `/status` - מצב הבוט והתיק\n"
                             "🔹 `/scan` - הפעלת סריקה יזומה עכשיו\n"
@@ -180,19 +203,18 @@ def handle_commands():
                         stats = get_portfolio_stats()
                         msg = (
                             "📊 *סטטוס הבוט*\n\n"
-                            "✅ הבוט רץ וסורק שווקים.\n"
+                            "✅ הבוט רץ וסורק שווקים (כדורגל, כדורסל, טניס, מזג אוויר).\n"
                             f"📈 סה\"כ איתותים שנשלחו: {stats}\n"
                             f"👥 משתמשים מנויים: {len(get_all_users())}"
                         )
                         send_telegram(chat_id, msg)
                         
                     elif text == "/scan":
-                        send_telegram(chat_id, "🔄 מתחיל סריקה יזומה של השוק... זה ייקח כמה שניות.")
-                        # בגרסה מתקדמת נעביר את זה ל-thread, כאן נסרוק ישירות
+                        send_telegram(chat_id, "🔄 מתחיל סריקה יזומה של השוק (מסנן נישות)... זה ייקח כמה שניות.")
                         scan_markets(ClobClient("https://clob.polymarket.com"), manual_chat_id=chat_id)
                         
                     elif text == "/help":
-                        send_telegram(chat_id, "לשאלות נוספות, הבוט שולח איתותים אוטומטית כשיש הזדמנות. פשוט חכה להודעה!")
+                        send_telegram(chat_id, "לשאלות נוספות, הבוט שולח איתותים אוטומטית כשיש הזדמנות בנישות הנבחרות. פשוט חכה להודעה!")
                         
         time.sleep(1)
 
@@ -201,14 +223,21 @@ def handle_commands():
 # ==========================================
 def scan_markets(client, manual_chat_id=None):
     try:
+        # Gamma API is better for searching specific categories, but we use simplified for now
         markets = client.get_simplified_markets()
         if not markets or "data" not in markets:
             if manual_chat_id: send_telegram(manual_chat_id, "❌ לא נמצאו שווקים כרגע.")
             return
 
         signals_found = 0
-        for market in markets["data"][:15]:
+        for market in markets["data"][:50]: # סורקים יותר שווקים כדי למצוא את הנישות
             name = market.get("question")
+            
+            # זיהוי נישה - אם זה לא באחת מ-4 הנישות, מדלגים
+            niche = identify_niche(name)
+            if niche == "🌍 כללי":
+                continue
+                
             tokens = market.get("tokens", [])
             if not tokens or len(tokens) < 2: continue
             yes_token = tokens[0]["token_id"]
@@ -218,6 +247,7 @@ def scan_markets(client, manual_chat_id=None):
                 if not price: continue
                 price = float(price)
 
+                # סינון בסיסי - תמחור קיצוני
                 signal_type, entry_price, is_yes = None, 0, True
                 if price < 0.30:
                     signal_type, entry_price, is_yes = "קנה YES", price, True
@@ -226,17 +256,19 @@ def scan_markets(client, manual_chat_id=None):
 
                 if signal_type:
                     whale_alert, whale_vol = check_whale_activity(yes_token)
-                    ai_score, ai_reason = analyze_with_ai(name, entry_price, is_yes)
+                    ai_score, ai_reason = analyze_with_ai(name, entry_price, is_yes, niche)
+                    
                     if whale_alert: ai_score = min(100, ai_score + 15)
 
-                    if ai_score >= 70:
+                    # סף מינימלי של 80 כדי לסנן ספאם
+                    if ai_score >= 80:
                         signal = {
                             "action": signal_type, "entry": entry_price, "ai_score": ai_score,
                             "reason": ai_reason, "whale_alert": whale_alert, "whale_vol": whale_vol
                         }
                         log_trade(name, signal_type, entry_price, ai_score)
                         stats = get_portfolio_stats()
-                        msg = format_advanced_signal(name, signal, stats)
+                        msg = format_advanced_signal(name, signal, stats, niche)
                         
                         if manual_chat_id:
                             send_telegram(manual_chat_id, msg)
@@ -249,7 +281,7 @@ def scan_markets(client, manual_chat_id=None):
             except: continue
 
         if manual_chat_id and signals_found == 0:
-            send_telegram(manual_chat_id, "🤷‍♂️ סריקה הסתיימה. לא נמצאו הזדמנויות טובות כרגע.")
+            send_telegram(manual_chat_id, "🤷‍♂️ סריקה הסתיימה. לא נמצאו הזדמנויות חזקות בנישות הנבחרות כרגע.")
 
     except Exception as e:
         print(f"Error scanning: {e}")
@@ -262,17 +294,14 @@ def auto_scanner():
 
 def main():
     setup_db()
-    # נוסיף את ה-CHAT_ID הקיים למסד הנתונים כדי שימשיך לקבל התראות
     if os.getenv("TELEGRAM_CHAT_ID"):
         add_user(os.getenv("TELEGRAM_CHAT_ID"))
         
     print("Starting HolyPoly Bot...")
     
-    # הפעלת הסורק האוטומטי ב-Thread נפרד
     scanner_thread = threading.Thread(target=auto_scanner, daemon=True)
     scanner_thread.start()
     
-    # הפעלת מאזין הפקודות ב-Thread הראשי
     handle_commands()
 
 if __name__ == "__main__":

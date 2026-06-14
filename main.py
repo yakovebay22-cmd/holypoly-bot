@@ -13,14 +13,6 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8907723838:AAG5fi0vcbtf9SCdinP
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "USE_SANDBOX_AI")
 GAMMA_API = "https://gamma-api.polymarket.com"
 
-# תגיות מפתח (מבוסס על ה-API של Polymarket)
-TAGS = {
-    "Soccer": "100383",
-    "NBA": "100196", # Note: Some IDs might vary, using broad sports tags
-    "Tennis": "100319",
-    "Weather": "100125"
-}
-
 # ==========================================
 # 2. Database Setup
 # ==========================================
@@ -62,13 +54,13 @@ def get_all_users():
 # ==========================================
 # 3. Polymarket Scanner (STABLE)
 # ==========================================
-def fetch_active_events():
-    """שליפת אירועים פעילים מה-Gamma API בצורה היציבה ביותר"""
-    url = f"{GAMMA_API}/events"
+def fetch_active_markets():
+    """שליפת שווקים פעילים ישירות מה-Markets API - זה מחזיר שווקים בודדים ולא אירועים"""
+    url = f"{GAMMA_API}/markets"
     params = {
         "active": "true",
         "closed": "false",
-        "limit": 50,
+        "limit": 100,
         "order": "volume_24hr",
         "ascending": "false"
     }
@@ -81,35 +73,40 @@ def fetch_active_events():
     return []
 
 def scan_markets(manual_chat_id=None):
-    events = fetch_active_events()
-    if not events:
+    markets = fetch_active_markets()
+    if not markets:
         if manual_chat_id:
-            send_telegram(manual_chat_id, "❌ לא הצלחתי למשוך נתונים מה-API. מנסה שוב...")
+            send_telegram(manual_chat_id, "❌ לא הצלחתי למשוך נתונים מה-API.")
         return
 
-    found_any = False
-    report = "🔍 *דוח סריקה גולמי (שווקים פעילים):*\n\n"
+    found_count = 0
+    keywords = ['soccer', 'football', 'nba', 'basketball', 'tennis', 'weather', 'temperature', 'rain', 'match', 'vs']
     
-    for event in events:
-        title = event.get('title', 'No Title')
-        markets = event.get('markets', [])
+    for m in markets:
+        question = m.get('question', '')
+        group_item_title = m.get('groupItemTitle', '')
+        title = question if question else group_item_title
         
-        # סינון בסיסי לפי מילות מפתח (ספורט ומזג אוויר)
-        keywords = ['soccer', 'football', 'nba', 'basketball', 'tennis', 'weather', 'temperature', 'rain']
+        if not title:
+            continue
+            
         is_relevant = any(kw in title.lower() for kw in keywords)
         
-        if is_relevant and markets:
-            found_any = True
-            m = markets[0] # לוקחים את השוק הראשון באירוע
+        if is_relevant:
+            found_count += 1
             price = float(m.get('outcomePrices', [0, 0])[0])
             
-            # שליחת איתות בסיסי (ללא AI כרגע כדי לוודא זרימה)
+            # אם זה מעל 0.95 או מתחת ל-0.05, זה לא איתות מעניין
+            if price > 0.95 or price < 0.05:
+                continue
+
             msg = (
                 f"🎯 *איתות זוהה!*\n\n"
                 f"🏟️ *{title}*\n"
                 f"🔑 קניית YES\n"
                 f"💰 מחיר: ${price:.2f}\n"
-                f"📊 ווליום: ${event.get('volume_24hr', 0):,.0f}"
+                f"📊 ווליום: ${float(m.get('volume24hr', 0)):,.0f}\n"
+                f"🔗 [למסחר](https://polymarket.com/market/{m.get('slug')})"
             )
             
             if manual_chat_id:
@@ -118,11 +115,14 @@ def scan_markets(manual_chat_id=None):
                 for user in get_all_users():
                     send_telegram(user, msg)
             
-            # נתעד בתיק
             log_trade(title, "BUY YES", price, 70)
+            
+            # הגבלה ל-5 איתותים בסריקה אחת כדי לא להציף
+            if found_count >= 5:
+                break
 
-    if not found_any and manual_chat_id:
-        send_telegram(manual_chat_id, "⚠️ לא נמצאו שווקי ספורט/מזג אוויר רלוונטיים ברגע זה.")
+    if found_count == 0 and manual_chat_id:
+        send_telegram(manual_chat_id, "⚠️ לא נמצאו שווקי ספורט/מזג אוויר רלוונטיים ברגע זה (נסרק 100 השווקים המובילים).")
 
 def log_trade(market, action, entry_price, ai_score):
     conn = sqlite3.connect('simulator.db', check_same_thread=False)
@@ -138,7 +138,7 @@ def log_trade(market, action, entry_price, ai_score):
 # ==========================================
 def send_telegram(chat_id, text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown", "disable_web_page_preview": True}
     try:
         requests.post(url, json=payload, timeout=5)
     except:
@@ -173,10 +173,8 @@ def handle_commands():
 # ==========================================
 if __name__ == "__main__":
     setup_db()
-    # הפעלת מאזין פקודות בטרד נפרד
     threading.Thread(target=handle_commands, daemon=True).start()
-    
     print("Bot is running...")
     while True:
         scan_markets()
-        time.sleep(600) # סריקה כל 10 דקות
+        time.sleep(600)

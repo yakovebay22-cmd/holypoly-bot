@@ -158,13 +158,16 @@ IMPORTANT RULES:
 - A score of 90+ means "very high confidence the market is wrong"
 
 Return ONLY valid JSON:
-{{"score": <int 1-100>, "reason": "<1 sentence in Hebrew explaining your analysis>"}}
+{{"score": <int 1-100>, "reason": "<1-2 sentences in Hebrew explaining your analysis. MUST include specific reasons like 'יש פציעה לשחקן מפתח', 'רצף ניצחונות אחרון', or 'תחזית מזג אוויר מעודכנת'>"}}
 """
     try:
+        # Use an available model in the sandbox environment, fallback to gpt-4.1-mini
+        model_name = "gpt-4.1-mini" if "manus.im" in api_base else "gpt-4o"
+        
         response = requests.post(
             f"{api_base}/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},
-            json={"model": "gpt-4o", "messages": [{"role": "user", "content": prompt}], "temperature": 0.2},
+            json={"model": model_name, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2},
             timeout=15
         )
         data = response.json()

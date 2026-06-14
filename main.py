@@ -318,13 +318,40 @@ def scan_markets(client, manual_chat_id=None):
         # --- שליפת אירועים של היום ומחר דרך Events API ---
         all_markets = []
         
-        # 1. שליפת events עם slug שמכיל את התאריך של היום
+        # 1. שליפת events עם slug מדויק לכל תאריך (היום ומחר)
+        # שימוש ב-slug_contains + סינון לפי שנת 2026
         for date_str in [today, tomorrow]:
             try:
-                r = requests.get(f'https://gamma-api.polymarket.com/events?slug={date_str}&limit=50', headers=headers, timeout=10)
+                r = requests.get(
+                    f'https://gamma-api.polymarket.com/events?slug_contains={date_str}&limit=50',
+                    headers=headers, timeout=10
+                )
                 if r.status_code == 200:
                     events = r.json()
                     for event in events:
+                        slug = event.get('slug', '')
+                        # סינון: רק אירועים שה-slug מכיל את התאריך המדויק שלנו
+                        if date_str not in slug:
+                            continue
+                        for mk in event.get('markets', []):
+                            mk['_event_title'] = event.get('title', '')
+                            all_markets.append(mk)
+            except:
+                pass
+        
+        # 1b. חיפוש נוסף עם slug מדויק למשחקי מונדיאל (שיש להם more-markets)
+        for date_str in [today, tomorrow]:
+            try:
+                r = requests.get(
+                    f'https://gamma-api.polymarket.com/events?slug_contains={date_str}-more-markets&limit=50',
+                    headers=headers, timeout=10
+                )
+                if r.status_code == 200:
+                    events = r.json()
+                    for event in events:
+                        slug = event.get('slug', '')
+                        if date_str not in slug:
+                            continue
                         for mk in event.get('markets', []):
                             mk['_event_title'] = event.get('title', '')
                             all_markets.append(mk)

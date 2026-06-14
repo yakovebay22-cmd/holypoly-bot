@@ -359,6 +359,12 @@ def scan_markets(client, manual_chat_id=None):
         
         if manual_chat_id:
             send_telegram(manual_chat_id, f"🔍 נמצאו {len(all_markets)} שווקים. מסנן...")
+        
+        # דיבאג: ספירת כל מה שנמצא ומה נחסם
+        debug_niche_pass = 0
+        debug_vol_pass = 0
+        debug_price_pass = 0
+        debug_samples = []
 
         signals_found = 0
         for market in all_markets:
@@ -367,12 +373,18 @@ def scan_markets(client, manual_chat_id=None):
             # זיהוי נישה - אם זה לא באחת מ-4 הנישות, מדלגים
             niche = identify_niche(name)
             if niche == "🌍 כללי":
+                if len(debug_samples) < 3:
+                    debug_samples.append(f"[niche skip] {name[:40]}")
                 continue
+            debug_niche_pass += 1
 
             # סינון שווקים מתים (נפח נמוך מ-$5000)
             volume = market.get('volume', 0)
             if volume and float(volume) < 5000:
+                if len(debug_samples) < 6:
+                    debug_samples.append(f"[vol skip] {name[:35]} vol=${float(volume):,.0f}")
                 continue
+            debug_vol_pass += 1
             
             # פילטר תאריך: שווקים מה-events API כבר מסוננים להיום/מחר.
             # רק שווקים מהשליפה הרגילה צריכים סינון תאריך
@@ -449,7 +461,18 @@ def scan_markets(client, manual_chat_id=None):
             except: continue
 
         if manual_chat_id and signals_found == 0:
-            send_telegram(manual_chat_id, "🤷‍♂️ סריקה הסתיימה. לא נמצאו הזדמנויות חזקות בנישות הנבחרות כרגע.")
+            debug_msg = (
+                f"🤷‍♂️ סריקה הסתיימה.\n\n"
+                f"📊 *דיבאג:*\n"
+                f"סה\"\u05db שווקים: {len(all_markets)}\n"
+                f"עברו נישה: {debug_niche_pass}\n"
+                f"עברו נפח: {debug_vol_pass}\n"
+                f"עברו מחיר: {debug_price_pass}\n"
+                f"\nדוגמאות למה נחסם:\n"
+            )
+            for s in debug_samples[:5]:
+                debug_msg += f"  {s}\n"
+            send_telegram(manual_chat_id, debug_msg)
 
     except Exception as e:
         print(f"Error scanning: {e}")

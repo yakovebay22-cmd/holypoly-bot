@@ -30,7 +30,8 @@ def setup_db():
                   timestamp DATETIME)''')
     c.execute('''CREATE TABLE IF NOT EXISTS users (
                   chat_id TEXT PRIMARY KEY,
-                  joined_at DATETIME)''')
+                  joined_at DATETIME,
+                  active INTEGER DEFAULT 1)''')
     conn.commit()
     conn.close()
 
@@ -45,10 +46,25 @@ def add_user(chat_id):
 def get_all_users():
     conn = sqlite3.connect('simulator.db', check_same_thread=False)
     c = conn.cursor()
-    c.execute("SELECT chat_id FROM users")
+    c.execute("SELECT chat_id FROM users WHERE active=1")
     users = [row[0] for row in c.fetchall()]
     conn.close()
     return users
+
+def remove_user(chat_id):
+    conn = sqlite3.connect('simulator.db', check_same_thread=False)
+    c = conn.cursor()
+    c.execute("UPDATE users SET active=0 WHERE chat_id=?", (str(chat_id),))
+    conn.commit()
+    conn.close()
+
+def get_history(limit=5):
+    conn = sqlite3.connect('simulator.db', check_same_thread=False)
+    c = conn.cursor()
+    c.execute("SELECT market, action, entry_price, ai_score, timestamp FROM portfolio ORDER BY id DESC LIMIT ?", (limit,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
 def log_trade(market, action, entry_price, ai_score, amount=10.0):
     conn = sqlite3.connect('simulator.db', check_same_thread=False)
@@ -266,8 +282,23 @@ def handle_commands():
                         send_telegram(chat_id, "🔄 מתחיל סריקה יזומה של השוק (מסנן נישות)... זה ייקח כמה שניות.")
                         scan_markets(ClobClient("https://clob.polymarket.com"), manual_chat_id=chat_id)
                         
+                    elif text == "/stop":
+                        remove_user(chat_id)
+                        send_telegram(chat_id, "⏹ *האיתותים נעצרו.*\n\nלא תקבל יותר הודעות אוטומטיות.\nלהפעלה מחדש שלח /start")
+                    
+                    elif text == "/history":
+                        rows = get_history(5)
+                        if not rows:
+                            send_telegram(chat_id, "💭 אין עדיין היסטוריה. הבוט עדיין לא שלח איתותים.")
+                        else:
+                            msg = "📜 *5 איתותים אחרונים:*\n\n"
+                            for i, (market, action, price, score, ts) in enumerate(rows, 1):
+                                icon = "🟢" if "YES" in action else "🔴"
+                                msg += f"{i}. {icon} {action} | ${price:.2f} | ציון:{score}\n   _{market[:45]}_\n   {ts}\n\n"
+                            send_telegram(chat_id, msg)
+                    
                     elif text == "/help":
-                        send_telegram(chat_id, "לשאלות נוספות, הבוט שולח איתותים אוטומטית כשיש הזדמנות בנישות הנבחרות. פשוט חכה להודעה!")
+                        send_telegram(chat_id, "📚 *פקודות:*\n\n/start — הפעלה + רישום\n/scan — סריקה יזומה\n/status — מצב הבוט\n/history — 5 איתותים אחרונים\n/stop — עצירת איתותים\n\nהבוט סורק כל 5 דקות אוטומטית.")
                         
         time.sleep(1)
 

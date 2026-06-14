@@ -72,7 +72,12 @@ def get_portfolio_stats():
 # ==========================================
 def identify_niche(market_name):
     name_lower = market_name.lower()
-    if any(word in name_lower for word in ['soccer', 'football', 'premier league', 'champions league', 'fifa', 'uefa']):
+    
+    # סינון שאלות ספקולטיביות על זכייה במונדיאל בעתיד הרחוק
+    if "world cup" in name_lower and "win" in name_lower:
+        return "🌍 כללי" # ידלג על זה
+        
+    if any(word in name_lower for word in ['soccer', 'football', 'premier league', 'champions league', 'fifa', 'uefa', 'euro']):
         return "⚽ כדורגל"
     elif any(word in name_lower for word in ['nba', 'basketball', 'lakers', 'celtics']):
         return "🏀 כדורסל"
@@ -84,7 +89,8 @@ def identify_niche(market_name):
 
 def analyze_with_ai(market_name, price, is_yes, niche):
     if not OPENAI_API_KEY:
-        return 75, f"מבוסס על תמחור סטטיסטי בנישת {niche}."
+        # ציון נמוך יותר כשאין AI אמיתי, כדי למנוע ספאם
+        return 65, f"⚠️ מנוע ה-AI כבוי (חסר מפתח OpenAI). הניתוח מבוסס על תמחור סטטיסטי בלבד בנישת {niche}."
     
     prompt = f"""
     You are an expert sports/weather analyst trading on Polymarket.
@@ -245,6 +251,11 @@ def scan_markets(client, manual_chat_id=None):
             if niche == "🌍 כללי":
                 continue
 
+            # סינון שווקים מתים (נפח נמוך מ-$5000)
+            volume = market.get('volume', 0)
+            if volume and float(volume) < 5000:
+                continue
+
             # מחיר ישירות מה-API — ללא קריאה נוספת!
             prices = market.get('outcomePrices')
             if not prices:
@@ -270,9 +281,14 @@ def scan_markets(client, manual_chat_id=None):
 
                 # סינון בסיסי - תמחור קיצוני
                 signal_type, entry_price, is_yes = None, 0, True
-                if price < 0.30:
+                # שינוי הלוגיקה: 
+                # לא קונים YES רק בגלל שהמחיר נמוך (כי רוב הקבוצות לא יזכו במונדיאל)
+                # קונים YES רק כשיש הסתברות חזקה (מעל 60%) אבל לא גבוהה מדי (עד 85%)
+                # קונים NO כשיש תמחור יתר קיצוני (מעל 85%)
+                
+                if 0.60 <= price <= 0.85:
                     signal_type, entry_price, is_yes = "קנה YES", price, True
-                elif price > 0.70:
+                elif price > 0.85:
                     signal_type, entry_price, is_yes = "קנה NO", round(1.0 - price, 2), False
 
                 if signal_type:

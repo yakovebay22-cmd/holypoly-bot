@@ -315,54 +315,41 @@ def scan_markets(client, manual_chat_id=None):
         today = datetime.datetime.utcnow().strftime('%Y-%m-%d')
         tomorrow = (datetime.datetime.utcnow() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
         
-        # --- שליפת אירועים של היום ומחר דרך Events API ---
+        # --- שליפת שווקים רלוונטיים להיום ומחר ---
         all_markets = []
         
-        # 1. שליפת events עם slug מדויק לכל תאריך (היום ומחר)
-        # שימוש ב-slug_contains + סינון לפי שנת 2026
-        for date_str in [today, tomorrow]:
+        # שליפת כל השווקים הפעילים עם pagination (עד 1000)
+        # וסינון לפי תאריך בשם השאלה או ב-slug
+        for offset in range(0, 1000, 100):
             try:
                 r = requests.get(
-                    f'https://gamma-api.polymarket.com/events?slug_contains={date_str}&limit=50',
+                    f'https://gamma-api.polymarket.com/markets?limit=100&offset={offset}&active=true',
                     headers=headers, timeout=10
                 )
-                if r.status_code == 200:
-                    events = r.json()
-                    for event in events:
-                        slug = event.get('slug', '')
-                        # סינון: רק אירועים שה-slug מכיל את התאריך המדויק שלנו
-                        if date_str not in slug:
-                            continue
-                        for mk in event.get('markets', []):
-                            mk['_event_title'] = event.get('title', '')
-                            all_markets.append(mk)
+                if r.status_code != 200:
+                    break
+                batch = r.json()
+                if not batch:
+                    break
+                
+                for mk in batch:
+                    name = mk.get('question', '').lower()
+                    slug = mk.get('slug', '').lower()
+                    
+                    # סינון: רק שווקים שמכילים את התאריך של היום/מחר בשם או ב-slug
+                    if today in name or today in slug or tomorrow in name or tomorrow in slug:
+                        mk['_event_title'] = mk.get('question', '')
+                        all_markets.append(mk)
             except:
-                pass
+                break
         
-        # 1b. חיפוש נוסף עם slug מדויק למשחקי מונדיאל (שיש להם more-markets)
-        for date_str in [today, tomorrow]:
-            try:
-                r = requests.get(
-                    f'https://gamma-api.polymarket.com/events?slug_contains={date_str}-more-markets&limit=50',
-                    headers=headers, timeout=10
-                )
-                if r.status_code == 200:
-                    events = r.json()
-                    for event in events:
-                        slug = event.get('slug', '')
-                        if date_str not in slug:
-                            continue
-                        for mk in event.get('markets', []):
-                            mk['_event_title'] = event.get('title', '')
-                            all_markets.append(mk)
-            except:
-                pass
-        
-        # 2. גם שליפה רגילה של markets פעילים (למזג אוויר ודברים שלא ב-events)
+        # גם שליפה רגילה למזג אוויר ודברים כלליים (לא תלויי תאריך)
         try:
             r2 = requests.get('https://gamma-api.polymarket.com/markets?limit=100&active=true', headers=headers, timeout=10)
             if r2.status_code == 200:
-                all_markets.extend(r2.json())
+                for mk in r2.json():
+                    mk['_event_title'] = ''
+                    all_markets.append(mk)
         except:
             pass
         
